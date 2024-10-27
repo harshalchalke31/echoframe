@@ -5,35 +5,32 @@ import matplotlib.pyplot as plt
 
 def visualize_segmentation_masks(video_name, video_folder, filelist_path='Filelist.csv', tracings_path='VolumeTracings.csv', num_frames=10):
     """
-    Visualize segmentation masks for a specified number of frames from a video in the EchoNet-Pediatric dataset.
+    Visualize the representative frames with segmentation masks from a video in the EchoNet-Pediatric dataset.
     
     Parameters:
         video_name (str): Name of the video file (e.g., 'your_sample_video.avi').
         video_folder (str): Path to the folder containing video files.
-        filelist_path (str): Path to 'Filelist.csv'.
         tracings_path (str): Path to 'VolumeTracings.csv'.
-        num_frames (int): Number of frames to visualize with segmentation masks.
     """
-    # Load the file lists
-    filelist_df = pd.read_csv(filelist_path)
+    # Load the volume tracings
     tracings_df = pd.read_csv(tracings_path)
 
-    # Select tracings for the sample video
+    # Select tracings for the sample video and filter for unique frames
     sample_tracings = tracings_df[tracings_df['FileName'] == video_name]
+    representative_frames = sample_tracings['Frame'].unique()
 
     # Load the video
     video_path = f"{video_folder}/{video_name}"
     cap = cv2.VideoCapture(video_path)
 
-    # Select frames to visualize
-    frame_indices = sample_tracings['Frame'].unique()[:num_frames]
-    fig, axes = plt.subplots(2, 5, figsize=(20, 8))
-    axes = axes.flatten()
+    # Prepare plot
+    num_frames = len(representative_frames)
+    fig, axes = plt.subplots(1, num_frames, figsize=(5 * num_frames, 5))
+    if num_frames == 1:
+        axes = [axes]  # Ensure axes is iterable even if there's only one frame
 
-    frame_count = 0  # Counter for the valid frames to display
-
-    for i, frame_idx in enumerate(frame_indices):
-        # Ensure frame_idx is an integer
+    for i, frame_idx in enumerate(representative_frames):
+        # Set video to the specific frame position
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
         ret, frame = cap.read()
         
@@ -48,18 +45,12 @@ def visualize_segmentation_masks(video_name, video_folder, filelist_path='Fileli
 
         # Convert frame to RGB and plot
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        axes[frame_count].imshow(frame_rgb)
+        axes[i].imshow(frame_rgb)
         
         # Overlay segmentation mask
-        axes[frame_count].plot(x_coords, y_coords, 'r-', linewidth=2)
-        axes[frame_count].set_title(f"Frame {frame_idx}")
-        axes[frame_count].axis('off')
-        
-        frame_count += 1  # Move to the next subplot
-
-        # Break if we have filled all subplots
-        if frame_count >= len(axes):
-            break
+        axes[i].plot(x_coords, y_coords, 'r-', linewidth=2)
+        axes[i].set_title(f"Frame {frame_idx} (Representative)")
+        axes[i].axis('off')
 
     cap.release()
     plt.tight_layout()
