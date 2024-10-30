@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-def visualize_segmentation_masks(video_name, video_folder, filelist_path='Filelist.csv', tracings_path='VolumeTracings.csv', num_frames=10):
+def visualize_segmentation_masks(video_name, video_folder, filelist_path, tracings_path, num_frames=10):
     """
     Visualize the representative frames with segmentation masks from a video in the EchoNet-Pediatric dataset.
     
