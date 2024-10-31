@@ -1,6 +1,7 @@
 import cv2
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def visualize_segmentation_masks(video_name, video_folder, filelist_path, tracings_path, num_frames=10):
@@ -56,9 +57,77 @@ def visualize_segmentation_masks(video_name, video_folder, filelist_path, tracin
     plt.tight_layout()
     plt.show()
 
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
+def visualize_segmentation_masks_with_background(video_name, video_folder, filelist_path, tracings_path):
+    """
+    Visualize the representative frames with segmentation masks from a video in the EchoNet-Pediatric dataset.
+    Additionally, draw the segmentation masks on blank plots with a background color for each frame separately.
+    
+    Parameters:
+        video_name (str): Name of the video file (e.g., 'your_sample_video.avi').
+        video_folder (str): Path to the folder containing video files.
+        tracings_path (str): Path to 'VolumeTracings.csv'.
+    """
+    # Load the volume tracings
+    tracings_df = pd.read_csv(tracings_path)
+
+    # Select tracings for the sample video and filter for unique frames
+    sample_tracings = tracings_df[tracings_df['FileName'] == video_name]
+    representative_frames = sample_tracings['Frame'].unique()
+
+    # Load the video
+    video_path = f"{video_folder}/{video_name}"
+    cap = cv2.VideoCapture(video_path)
+
+    for frame_idx in representative_frames:
+        # Set video to the specific frame position
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
+        ret, frame = cap.read()
+        
+        if not ret:
+            print(f"Frame {frame_idx} could not be loaded, skipping.")
+            continue
+
+        # Get tracing coordinates for the current frame
+        frame_tracings = sample_tracings[sample_tracings['Frame'] == frame_idx]
+        x_coords = frame_tracings['X'].values
+        y_coords = frame_tracings['Y'].values
+
+        # Convert frame to RGB and plot the original frame with segmentation overlay
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Plot the original frame with segmentation overlay
+        fig1, ax1 = plt.subplots(figsize=(5, 5))
+        ax1.imshow(frame_rgb)
+        ax1.plot(x_coords, y_coords, 'r-', linewidth=2)
+        ax1.set_title(f"Frame {frame_idx}")
+        ax1.axis('off')
+        plt.show()
+
+        # Draw the segmentation mask on a blank plot with background color
+        fig2, ax2 = plt.subplots(figsize=(5, 5))
+
+        # Draw a filled rectangle to set the background color manually
+        ax2.add_patch(plt.Rectangle((0, 0), frame_rgb.shape[1], frame_rgb.shape[0], color="#2C3E50"))
+
+        # Fill the segmentation area in red
+        ax2.fill(x_coords, y_coords, '#F7DC6F')
+
+        # Set the limits to match the frame dimensions and invert y-axis
+        ax2.set_xlim([0, frame_rgb.shape[1]])
+        ax2.set_ylim([frame_rgb.shape[0], 0])
+
+        # Turn off the axes for a cleaner look
+        ax2.axis('off')
+        ax2.set_title(f"Segmentation Mask (Frame {frame_idx})")
+
+        plt.show()
+
+
+    cap.release()
+
+
+
+
 
 def visualize_segmentation_for_adults(video_name, video_folder, filelist_path, tracings_path):
     """
