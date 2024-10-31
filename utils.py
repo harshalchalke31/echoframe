@@ -56,6 +56,87 @@ def visualize_segmentation_masks(video_name, video_folder, filelist_path, tracin
     plt.tight_layout()
     plt.show()
 
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+def visualize_segmentation_for_adults(video_name, video_folder, filelist_path, tracings_path):
+    """
+    Visualize the segmentation masks for both end-systolic and end-diastolic frames based on available frames in VolumeTracings.csv.
+
+    Parameters:
+        video_name (str): Name of the video file (e.g., 'sample_video.avi').
+        video_folder (str): Path to the folder containing video files.
+        filelist_path (str): Path to the FileList.csv.
+        tracings_path (str): Path to the VolumeTracings.csv.
+    """
+    # Load the file list and volume tracings
+    file_list_df = pd.read_csv(filelist_path)
+    volume_tracings_df = pd.read_csv(tracings_path)
+
+    # Remove .avi extension from the video name for consistent comparison
+    video_name_no_ext = video_name.replace('.avi', '')
+
+    # Filter the file list for the given video
+    video_info = file_list_df[file_list_df['FileName'] == video_name_no_ext]
+    if video_info.empty:
+        print(f"Video {video_name} not found in FileList.csv.")
+        return
+
+    # Access frame height and width properly using .iloc
+    frame_height = int(video_info['FrameHeight'].iloc[0])
+    frame_width = int(video_info['FrameWidth'].iloc[0])
+
+    # Filter volume tracings for the given video
+    video_tracings = volume_tracings_df[volume_tracings_df['FileName'] == video_name]
+
+    # Check if there are tracings available
+    if video_tracings.empty:
+        print("Segmentation coordinates for the specified video not found.")
+        return
+
+    # Identify the unique frames available in tracings (e.g., end-systolic and end-diastolic)
+    unique_frames = video_tracings['Frame'].unique()
+    if len(unique_frames) < 2:
+        print("Insufficient frames for end-systolic and end-diastolic segmentation.")
+        return
+
+    # Assume the smallest frame number as end-diastolic and the largest as end-systolic
+    end_diastolic_frame_num = unique_frames.min()
+    end_systolic_frame_num = unique_frames.max()
+
+    # Extract the tracings for these frames
+    end_diastolic_frame = video_tracings[video_tracings['Frame'] == end_diastolic_frame_num]
+    end_systolic_frame = video_tracings[video_tracings['Frame'] == end_systolic_frame_num]
+
+    # Create masks for the frames
+    def create_mask(tracings, height, width):
+        mask = np.zeros((height, width), dtype=np.uint8)
+        for _, row in tracings.iterrows():
+            x1, y1, x2, y2 = int(row['X1']), int(row['Y1']), int(row['X2']), int(row['Y2'])
+            mask[y1:y2, x1:x2] = 1  # Fill the region in the mask
+        return mask
+
+    systolic_mask = create_mask(end_systolic_frame, frame_height, frame_width)
+    diastolic_mask = create_mask(end_diastolic_frame, frame_height, frame_width)
+
+    # Plot the masks
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+    axs[0].imshow(systolic_mask, cmap='viridis')
+    axs[0].set_title(f'End-Systolic Mask (Frame {end_systolic_frame_num})')
+    axs[0].axis('off')
+
+    axs[1].imshow(diastolic_mask, cmap='viridis')
+    axs[1].set_title(f'End-Diastolic Mask (Frame {end_diastolic_frame_num})')
+    axs[1].axis('off')
+
+    plt.show()
+
+# Example call to the function (assuming video is in the specified folder and files are available)
+# visualize_segmentation_for_systolic_diastolic("0X100009310A3BD7FC.avi", "/path/to/video_folder", file_list_path, volume_tracings_path)
+
+
+
 # Usage
 if __name__ == "__main__":
     visualize_segmentation_masks('your_sample_video.avi', 'Videos')
