@@ -1,4 +1,4 @@
-# echoframe
+# Echoframe
 
 # FAQ on Implementing Lightweight LVEF Estimation with U-Net and MaskTrack
 
