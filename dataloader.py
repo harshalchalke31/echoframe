@@ -2,94 +2,104 @@ import os
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-import collections
 import cv2
+import numpy as np
 
-class EchoMasks(Dataset):
-    def __init__(self, root="./data/", split='train', transform=None):
-        self.folder = root
-        self.split = split
+class EchoDataset(Dataset):
+    def __init__(self, video_dir, mask_dir, filelist_path, tracings_path, transform=None):
+        """
+        Initializes the dataset.
+
+        Args:
+        - video_dir (str): Path to the echocardiogram videos.
+        - mask_dir (str): Path to the segmentation masks.
+        - filelist_path (str): Path to the FileList.csv file.
+        - tracings_path (str): Path to the VolumeTracings.csv file.
+        - transform (callable, optional): Transform to apply to video frames.
+        """
+        self.video_dir = video_dir
+        self.mask_dir = mask_dir
+        self.filelist = pd.read_csv(filelist_path)
+        self.tracings = pd.read_csv(tracings_path)
         self.transform = transform
 
-        self.fnames = []
-        self.ejection = []
-        self.fps = []
-
-        # read the file list CSV
-        file_list = pd.read_csv(os.path.join(self.folder, "FileList.csv"))
-        for index, row in file_list.iterrows():
-            file_name = os.path.splitext(row["FileName"])[0] + ".avi"
-            file_set = row["Split"].lower()
-            file_ef = row["EF"]
-            file_fps = row["FPS"]
-
-            # ensure the video file exists and matches the split
-            if os.path.exists(os.path.join(self.folder, "Videos", file_name)):
-                if file_set == split:
-                    self.fnames.append(file_name)
-                    self.ejection.append(float(file_ef))
-                    self.fps.append(file_fps)
-
-        # load tracing information for ED/ES frames
-        self.trace = collections.defaultdict(lambda: collections.defaultdict(list))
-        tracings = pd.read_csv(os.path.join(self.folder, "VolumeTracings.csv"))
-        for index, row in tracings.iterrows():
-            file_name, x1, y1, x2, y2, frame = row["FileName"], row["X1"], row["Y1"], row["X2"], row["Y2"], row["Frame"]
-            self.trace[file_name][frame].append([float(x1), float(y1), float(x2), float(y2)])
-
     def __len__(self):
-        return len(self.fnames)
+        return len(self.filelist)
 
     def __getitem__(self, idx):
-        # get the video path and load video frames
-        video_path = os.path.join(self.folder, "Videos", self.fnames[idx])
+        # Fetch video and metadata
+        video_name = self.filelist.iloc[idx]["VideoFileName"]
+        video_path = os.path.join(self.video_dir, video_name)
+
+        # Load video
+        video = self._load_video(video_path)
+
+        # Load segmentation masks
+        mask_path = os.path.join(self.mask_dir, f"{os.path.splitext(video_name)[0]}_masks.npy")
+        masks = np.load(mask_path)
+
+        # Fetch ground truth frames from tracings
+        gt_frames = self._get_ground_truth_frames(video_name)
+        gt_masks = masks[gt_frames]
+
+        # Prepare inputs: Current frame + previous frame's mask
+        inputs, targets = [], []
+        for i in range(1, len(video)):
+            input_frame = video[i]
+            prev_mask = masks[i - 1]
+            inputs.append(np.concatenate([input_frame, prev_mask], axis=0))  # Concatenate along channel axis
+            targets.append(masks[i])
+
+        # Apply transforms if specified
+        if self.transform:
+            inputs = [self.transform(frame) for frame in inputs]
+            targets = [self.transform(mask) for mask in targets]
+
+        # Convert to tensors
+        inputs = torch.tensor(np.stack(inputs), dtype=torch.float32)
+        targets = torch.tensor(np.stack(targets), dtype=torch.long)  # Assuming masks are categorical
+
+        return inputs, targets, gt_masks
+
+    def _load_video(self, video_path):
+        """
+        Loads a video and returns it as a numpy array of shape [T, C, H, W].
+        """
         cap = cv2.VideoCapture(video_path)
         frames = []
-
-        while cap.isOpened():
+        while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            if self.transform:
-                frame = self.transform(frame)
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert to RGB
+            frame = np.transpose(frame, (2, 0, 1))  # Convert to [C, H, W]
             frames.append(frame)
-
         cap.release()
+        return np.array(frames)
 
-        # convert to tensor
-        frames_tensor = torch.stack([torch.tensor(f, dtype=torch.float32) for f in frames])
+    def _get_ground_truth_frames(self, video_name):
+        """
+        Retrieves ground truth frame indices for a given video.
+        """
+        gt_data = self.tracings[self.tracings["VideoFileName"] == video_name]
+        return gt_data["FrameIndex"].values
 
-        # get the ejection fraction for the video
-        ejection_fraction = torch.tensor(self.ejection[idx], dtype=torch.float32)
 
-        # get frame tracing data
-        trace = self.trace[self.fnames[idx]]
+def get_dataloader(video_dir, mask_dir, filelist_path, tracings_path, batch_size=8, shuffle=True, transform=None):
+    """
+    Creates a DataLoader for the dataset.
 
-        return {"video": frames_tensor, "ejection_fraction": ejection_fraction, "trace": trace}
+    Args:
+    - video_dir (str): Path to the echocardiogram videos.
+    - mask_dir (str): Path to the segmentation masks.
+    - filelist_path (str): Path to the FileList.csv file.
+    - tracings_path (str): Path to the VolumeTracings.csv file.
+    - batch_size (int): Batch size for DataLoader.
+    - shuffle (bool): Whether to shuffle the dataset.
+    - transform (callable, optional): Transform to apply to video frames.
 
-    @staticmethod
-    def custom_collate_fn(batch):
-        # each item in batch is a dict of {'video': Tensor, 'ejection_fraction': Tensor, 'trace': dict}
-        batch_videos = [item['video'] for item in batch]
-        batch_ef = torch.stack([item['ejection_fraction'] for item in batch])
-        batch_trace = [item['trace'] for item in batch]
-
-        return {"videos": batch_videos, "ejection_fractions": batch_ef, "traces": batch_trace}
-
-    def get_dataloader(self, batch_size=2, shuffle=True):
-        return DataLoader(self, batch_size=batch_size, shuffle=shuffle, collate_fn=self.custom_collate_fn)
-
-def load_data():
-    dataset = EchoMasks(root="EchoNet-Dynamic/", split='train')
-    dataloader = dataset.get_dataloader(batch_size=2, shuffle=True)
-
-    for batch in dataloader:
-        print(f"Batch videos: {len(batch['videos'])}")
-        print(f"Ejection fractions: {batch['ejection_fractions']}")
-        print(f"Trace data: {batch['traces']}")
-        break
-
-# Call the function to load the data
-if __name__ == "__main__":
-    load_data()
+    Returns:
+    - DataLoader: A PyTorch DataLoader for the dataset.
+    """
+    dataset = EchoDataset(video_dir, mask_dir, filelist_path, tracings_path, transform)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
